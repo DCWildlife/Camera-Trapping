@@ -1,0 +1,319 @@
+############################################################################
+##                                                                        ##
+##      Estimating density througth REM (Random Encounter Model)          ##
+##                                                                        ##
+##                          Pablo Palencia, PhD                           ##
+##                                                                        ##
+##               adapted for Agouti by Davide Carniato                    ##
+##                                                                        ##
+
+
+# R code for implement Random Encounter Model (REM), a method to calculate populations densities from camera-trap 
+# data for species which do no exhibit individually-indentifiable markings (Rowcliffe et al. 2008). The code also
+# includes functions to estimate travel speed (Palencia et al. 2019, Rowcliffe et al. 2016), the activity value 
+# (Rowcliffe et al 2014) and standard error of obtained densities values.
+
+# This script has been adapted to be used directly with the files downloaded from Agouti.
+# Two files 'observations' and 'deployments' are required. 
+
+# Working directory
+
+# This will open an explorer window for easy browsing
+setwd(choose.dir())
+# To get the current working directory and verify that it is correct
+getwd()
+# Import the .txt table into R when the data are separated by ";"
+
+### FUNCTIONS (not included in packages. Developed by M. Rowcliffe & St. Andrews University)
+source("REM_functions.R") # importing some key functions to run the analysis
+
+
+### Load dataframes  ################################################################################################################################
+dataREM <- read.csv("observations.csv", sep = ",", dec=".", header=TRUE, as.is=TRUE) # parameters dataframe
+dataREM <- subset(dataREM, scientificName == "Sus scrofa")
+operat <- read.csv("deployments.csv", sep = ",", dec=".", header=TRUE, as.is=TRUE) # operatity matrix (to estimate survey effort)
+#df_coord <- read.table("Coordinates.txt", sep = ";", dec=".", header=TRUE, as.is=TRUE) # camera trap locations (plots, maps etc.)
+
+dataREM <- merge(dataREM, operat, by.x="deploymentID", by.y="deploymentID",all=TRUE)
+
+
+### ACTIVITY  ################################################################################################################################
+
+library(activity)
+data.acti <- as.data.frame(dataREM)
+
+# extracting time from datatime
+library(lubridate)
+data.acti$time <- format(ymd_hms(dataREM$timestamp), "%H:%M:%S")
+
+# PABLITO EDITS : simplifico mucho esta parte
+# Estimating radian time of day
+#data.acti$T_sec2 <- as.numeric(strptime(data.acti$time, format="%H:%M:%S") - as.POSIXct(format(Sys.Date())), units="secs")
+#data.acti$T_0_1 <- data.acti$T_sec2/86400; data.acti 
+
+# Discariding observations further than 5 meters (see Rowcliffe et al. 2014 Methods Ecol. Evol, 5(11): 1170-1179)
+#activity.repli <- subset(data.acti, radius <="5")
+
+# Estimating activity rate
+#activityRES <- 2*pi*activity.repli$T_0_1
+#mod1 <- fitact(activityRES, sample="data") 
+
+# Convert time of data to a numeric vector of radian time-of-day
+radtime <- na.omit(2*pi*gettime(data.acti$time, "%H:%M:%S", "proportion")) #na.omit for discarding errors in metadata (double check that only few pictures have been discarded)
+
+# fit activity model
+mod1 <- fitact(radtime, sample="model") #sample=model: large sample size (greater than 100-200); sample=data: small sample size (less than 100); o sample=none: no bootstrapping. 
+
+# Plot activity patterns
+par(mfrow=c(1,1)); plot(mod1); show(mod1)
+
+
+### TRAVEL SPEED (Palencia et al. 2019, Palencia et al. 2021, Rowcliffe et al. 2016)##############################################
+
+library(trappingmotion)
+#devtools::install_github("PabloPalencia/trappingmotion")
+
+#remove NAs 
+# PABLITO EDITS: quito la parte final de la siguiente linea (xq no debe haber errors con "character")
+# PABLITO EDITS: cambio el nombre a la nueva df. (estabas sobreescribiendo dataREM -no se si intencionadamente-)
+#dataREM <- subset(dataREM, speed!="NA")#; dataREM$speed <- as.numeric(as.character(dataREM$speed)) # Remove NAs
+dataspeed <- subset(dataREM, speed!="NA")
+
+# PABLITO EDITS: tienes velocidades > 60ms (es decir > 200km/h) probablemente sean errores... mejor meter un filtro
+dataspeed <- subset(dataspeed, speed < 10)
+identbhvs(dataspeed$speed) # identify movement states (see Palencia et al. 2021 - Methods Ecol. Evol.)
+speed <- meanspeed(behav_class) # average movement speed of each state
+
+### DAY RANGE  #######################################################################################################################
+
+dayrange(act=mod1@act[1], act_se=mod1@act[2], speed_data) #day range (daily distance travelled)
+
+### EFFECTIVE DETECTION RADIUS  ########################################################################
+
+library(Distance)
+
+data_dz_r<-subset(dataREM, radius >= 0 )
+
+data_dz_r$radius <- as.numeric(data_dz_r$radius)
+str(data_dz_r$radius)
+
+# PABLITO EDITS: de nuevo, tienes radios > 600m (no sab?a que las cmaaras eran tan potentes!)
+boxplot(data_dz_r$radius)
+data_dz_r <- subset(data_dz_r, radius < 50)
+hist(data_dz_r$radius) # to decide the truncation distance (w_rad)
+
+# Efective Detection Radius (m)
+w_rad <- 10
+# PABLITO EDITS: meto unos modelos mas simples. Podrias utilizar los tuyos, no hay ni habra diferencia en los resultados... simplemente estos son mas simples y se evitan errores
+# half-normal
+#hn_cos0 <- ds(data_dz_r$radius, transect = "point", key="hn", adjustment = "cos", order = 0, truncation=w_rad) 
+#hn_cos2 <- ds(data_dz_r$radius, transect = "point", key="hn", adjustment = "cos", order = 2, truncation=w_rad)
+#hn_herm0 <- ds(data_dz_r$radius, transect = "point", key="hn", adjustment = "herm", order = 0, truncation=w_rad)
+#hn_herm2 <- ds(data_dz_r$radius, transect = "point", key="hn", adjustment = "herm", order = 2, truncation=w_rad)
+#hn_poly0 <- ds(data_dz_r$radius, transect = "point", key="hn", adjustment = "poly", order = 0, truncation=w_rad)
+#hn_poly2 <- ds(data_dz_r$radius, transect = "point", key="hn", adjustment = "poly", order = 2, truncation=w_rad)
+
+#hazard-rate
+#hr_cos0 <- ds(data_dz_r$radius, transect = "point", key="hr", adjustment = "cos", order = 0, truncation=w_rad) 
+#hr_cos2 <- ds(data_dz_r$radius, transect = "point", key="hr", adjustment = "cos", order = 2, truncation=w_rad)
+#hr_herm0 <- ds(data_dz_r$radius, transect = "point", key="hr", adjustment = "herm", order = 0, truncation=w_rad)
+#hr_herm2 <- ds(data_dz_r$radius, transect = "point", key="hr", adjustment = "herm", order = 2, truncation=w_rad)
+#hr_poly0 <- ds(data_dz_r$radius, transect = "point", key="hr", adjustment = "poly", order = 0, truncation=w_rad)
+#hr_poly2 <- ds(data_dz_r$radius, transect = "point", key="hr", adjustment = "poly", order = 2, truncation=w_rad)
+
+#model comparison
+#AIC(hn_cos0, hn_cos2, hn_herm0, hn_herm2, hn_poly0, hn_poly2, hr_cos0, hr_herm0, hr_herm2, hr_poly0, hr_poly2)
+
+#half-normal
+hn <- ds(data_dz_r$radius, transect = "point", key="hn", adjustment = NULL, truncation=w_rad) 
+hn_cos <- ds(data_dz_r$radius, transect = "point", key="hn", adjustment = "cos", nadj = 1, truncation=w_rad)
+hn_herm <- ds(data_dz_r$radius, transect = "point", key="hn", adjustment = "herm", nadj = 1, truncation=w_rad)
+hn_poly <- ds(data_dz_r$radius, transect = "point", key="hn", adjustment = "poly", nadj = 1, truncation=w_rad)
+
+#hazard-rate
+hr <- ds(data_dz_r$radius, transect = "point", key="hr", adjustment = NULL, truncation=w_rad) 
+hr_cos <- ds(data_dz_r$radius, transect = "point", key="hr", adjustment = "cos", nadj = 1, truncation=w_rad)
+hr_herm <- ds(data_dz_r$radius, transect = "point", key="hr", adjustment = "herm", nadj = 1, truncation=w_rad)
+hr_poly <- ds(data_dz_r$radius, transect = "point", key="hr", adjustment = "poly", nadj = 1, truncation=w_rad)
+
+#model comparison
+AIC(hn, hn_cos, hn_herm, hn_poly, hr, hr_cos, hr_herm, hr_poly)
+
+
+# select best model
+# mind the fact that if your data is spiked at zero, you have to be carefoul with the hazard-rate model (details in Buckland et al. 2001)
+best_modRad <- hn
+
+# Estimating effective detection radius and (SE)
+EfecRad <- EDRtransform(best_modRad)
+
+EfecRad$EDR # mean
+EfecRad$se.EDR # SE
+
+# Plots... 
+par(mfrow=c(1,2))
+plot(best_modRad, main="Best model", xlab="Distance (m)",
+     showpoints=FALSE, lwd=3, xlim=c(0, w_rad))
+plot(best_modRad, main="Best model", xlab="Distance (m)", pdf=TRUE,
+     showpoints=FALSE, lwd=3, xlim=c(0, w_rad))
+par(mfrow=c(1,1))
+
+
+### EFFECTIVE DETECTION ANGLE #################################################################################################
+
+data_dz_ang<-subset(dataREM, angle != "NA" )
+
+data_dz_ang$Ang_rad <- (data_dz_ang$angle)
+FOV <- 55 # field of view of the cameras (degrees)
+w_ang <- FOV/2*0.0174533
+
+# PABLITO EDITS: idem que para el radio
+# half-normal
+#hn_cos0Ang <- ds(data_dz_ang$angle, transect = "line", key="hn", adjustment = "cos", order = 0, truncation=w_ang) 
+#hn_cos2Ang <- ds(data_dz_ang$angle, transect = "line", key="hn", adjustment = "cos", order = 2, truncation=w_ang)
+#hn_herm0Ang <- ds(data_dz_ang$angle, transect = "line", key="hn", adjustment = "herm", order = 0, truncation=w_ang)
+#hn_herm2Ang <- ds(data_dz_ang$angle, transect = "line", key="hn", adjustment = "herm", order = 2, truncation=w_ang)
+#hn_poly0Ang <- ds(data_dz_ang$angle, transect = "line", key="hn", adjustment = "poly", order = 0, truncation=w_ang)
+#hn_poly2Ang <- ds(data_dz_ang$angle, transect = "line", key="hn", adjustment = "poly", order = 2, truncation=w_ang)
+
+#hazard-rate
+#hr_cos0Ang <- ds(data_dz_ang$angle, transect = "line", key="hr", adjustment = "cos", order = 0, truncation=w_ang) 
+#hr_cos2Ang <- ds(data_dz_ang$angle, transect = "line", key="hr", adjustment = "cos", order = 2, truncation=w_ang)
+#hr_herm0Ang <- ds(data_dz_ang$angle, transect = "line", key="hr", adjustment = "herm", order = 0, truncation=w_ang)
+#hr_herm2Ang <- ds(data_dz_ang$angle, transect = "line", key="hr", adjustment = "herm", order = 2, truncation=w_ang)
+#hr_poly0Ang <- ds(data_dz_ang$angle, transect = "line", key="hr", adjustment = "poly", order = 0, truncation=w_ang)
+#hr_poly2Ang <- ds(data_dz_ang$angle, transect = "line", key="hr", adjustment = "poly", order = 2, truncation=w_ang)
+
+#model comparison
+#AIC(hn_cos0Ang, hn_cos2Ang, hn_herm0Ang, hn_herm2Ang, hn_poly0Ang, hn_poly2Ang, hr_cos0Ang, hr_cos2Ang, hr_herm0Ang, hr_herm2Ang, hr_poly0Ang, hr_poly2Ang)
+
+# half-normal
+hn_Ang <- ds(data_dz_ang$angle, transect = "line", key="hn", adjustment = NULL, truncation=w_ang) 
+hn_cosAng <- ds(data_dz_ang$angle, transect = "line", key="hn", adjustment = "cos", nadj = 1, truncation=w_ang)
+hn_hermAng <- ds(data_dz_ang$angle, transect = "line", key="hn", adjustment = "herm", nadj = 1, truncation=w_ang)
+hn_polyAng <- ds(data_dz_ang$angle, transect = "line", key="hn", adjustment = "poly", nadj = 1, truncation=w_ang)
+
+#hazard-rate
+hr_Ang <- ds(data_dz_ang$angle, transect = "line", key="hr", adjustment = NULL, truncation=w_ang) 
+hr_cosAng <- ds(data_dz_ang$angle, transect = "line", key="hr", adjustment = "cos", nadj = 1, truncation=w_ang)
+hr_hermAng <- ds(data_dz_ang$angle, transect = "line", key="hr", adjustment = "herm", nadj = 1, truncation=w_ang)
+hr_polyAng <- ds(data_dz_ang$angle, transect = "line", key="hr", adjustment = "poly", nadj = 1, truncation=w_ang)
+
+#uniform
+uni_cosAng <- ds(data_dz_ang$angle, transect = "line", key="uni", adjustment = "cos", nadj = 1, truncation=w_ang)
+uni_hermAng <- ds(data_dz_ang$angle, transect = "line", key="uni", adjustment = "herm", nadj = 1, truncation=w_ang)
+uni_polyAng <- ds(data_dz_ang$angle, transect = "line", key="uni", adjustment = "poly", nadj = 1, truncation=w_ang)
+
+#model comparison
+AIC(hn_Ang, hn_cosAng, hn_hermAng, hn_polyAng, hr_Ang, hr_cosAng, hr_hermAng, hr_polyAng, uni_cosAng, uni_hermAng, uni_polyAng)
+
+# select best model
+# mind the fact that if your data is spiked at zero, you have to be carefoul with the hazard-rate model (details in Buckland et al. 2001)
+best_modAng <- hn_Ang                 
+
+# Estimating effective detection radius and (SE)
+summary_ang<- summary(best_modAng$ddf)
+
+print(EfecAng_mean <- summary_ang$average.p*w_ang) # mean
+EfecAng_SE <-  summary_ang$average.p.se*w_ang# SE
+
+# Plots... 
+par(mfrow=c(1,1))
+plot(best_modAng, main="Best model", xlab="Angle (rad)",
+     showpoints=FALSE, lwd=3, xlim=c(0, w_ang))
+
+### TRAPPING-RATE  ##################################################################################################################
+
+data.dens <- as.data.frame(dataREM)
+
+# to extract start date from datatime format
+operat$start_date <- format(as.Date(operat$start,"%Y-%m-%d"), format = "%Y-%m-%d")
+
+# to extract end date from datatime format
+operat$end_date <- format(as.Date(operat$end,"%Y-%m-%d"), format = "%Y-%m-%d")
+
+# if there are 2 or more deployment for a single camera trap
+#start <- tapply(operat$start_date, operat$locationName, min)
+#end <- tapply(operat$end_date, operat$locationName, max)
+#operat <- (operat[!duplicated(operat$locationName), ])
+
+# adding the new operativity in the dataframe 
+#operat$start_date <- start
+#operat$end_date <- end
+
+
+# calculate the operativity for each camera 
+operat$days = as.integer(difftime(operat$end_date, operat$start_date, units = "days"))
+# PABLITO EDITS: debes explorar los datos... en este caso hay una camara con 2117 dias (obviamente un error)
+summary(operat$days)
+operat <- subset(operat, days < 2000)
+
+# Survey effort (camera days)
+tm <- sum(operat$days)
+
+# Based on truncation distance to estime EDD. NAs are new sequences
+# PABLITO EDITS: lo mismo pero de manera mas elegante (como el comandante bogabante)
+#data.dens <- subset(data.dens,radius < 10.1 | is.na(radius))
+#data.dens <- subset(data.dens, radius <= w_rad & angle <= w_ang)
+data.dens <- subset(dataREM, scientificName == "Sus scrofa")
+# number of sequences present in the DataFrame
+seq <- length(data.dens[, 1]) # Number of sequences 
+
+# identifyng different camera traps with how many sequences have each one
+# in the case of the "deploymentID" not correspond to a single camera trap 
+# use the coloumn "comments" to identify different cameras.
+# PABLITO EDITS: "locationName"?? no esta en los datos queme has pasado... lo cambio a deploymentID
+#seq_point<-data.frame(table(data.dens$locationName))
+seq_point<-data.frame(table(data.dens$deploymentID))
+
+# joint operativity file with frenquency file 
+operat <- merge(operat, seq_point, by.x= "deploymentID", by.y = "Var1", all.x = TRUE); operat[is.na(operat)] <- 0
+operat$tr <- operat$Freq/operat$days
+
+library(dplyr)
+tr<-operat[,c("Freq","days")] # Selecting columns
+
+# PABLITO EDITS: error?? "oper_days" no existe... solo days
+#tr <- subset(tr, oper_days > 0) # remove CT that doesnt work propoerly
+tr <- subset(tr, days > 0) # remove CT that doesnt work propoerly
+
+### Plot encounter rate - Optional ########################################################################
+operat$ER <- tr$Freq # add encounter rate to coordinates dataframe
+
+library(ggplot2)
+ggplot(data=operat) + 
+aes(x=longitude, y=latitude, size=ER) + 
+  geom_point(alpha=1, shape=16, col='blue') +
+  scale_size(breaks = c(0, 1, 5, 10, 20, 50), range = c(1, 20))+
+  ylab("Latitude (m)") +
+  xlab("Longitude (m)") +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        panel.border = element_rect(colour = "black", fill=NA, size=1),
+        legend.position = "none",
+        axis.title.y = element_text(color="black", size=20, face="bold"),
+        axis.title.x = element_text(color="black", size=20, face="bold"),
+        axis.text.y = element_text(size=rel(2)),
+        axis.text.x = element_text(size=rel(2)))
+
+
+
+### DENSITY  ##############################################################################################################################
+
+# Average values
+param <- list(DR = DR,
+              r = EfecRad$EDR / 1000,
+              theta = EfecAng_mean*2)
+
+# Standar error values
+paramse <- list(DR = DR_se,
+                r = EfecRad$se.EDR / 1000,
+                theta = EfecAng_SE*2)
+
+density<-bootTRD(tr$Freq, tr$days, param, paramse); density
+
+# Saving results
+results <- data.frame(seq, tm, DR, DR_se, EfecRad$EDR, EfecRad$se.EDR, EfecAng_mean*2, EfecAng_SE*2, density[,1], density[,2])
+dimnames(results) <- list("Value", c("y(seq.)","t (days)", "s(km/day)","s_se(km/day)", "r(m)", "r_se(m)", "ang(rad)", "ang_se(rad)", "d(ind/km2)", "d_se(ind/km2)")); View(results)
+ write.table(results, "Results.txt", sep=";", row.names = FALSE)
